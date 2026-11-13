@@ -430,11 +430,18 @@
               </div>
             </div>
 
-            <button 
-              @click="panitiaSubView = 'borang'"
-              class="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-700 hover:bg-blue-800 text-white font-bold text-xs rounded-xl shadow-xs transition">
-              <span>+</span> Cipta Nota Minta Baharu
-            </button>
+            <div class="flex flex-wrap items-center gap-2">
+           <button 
+             @click="openChangePwdModal"
+             class="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 font-bold text-xs rounded-xl transition">
+             <span>🔑</span> Tukar Password
+           </button>
+           <button 
+             @click="panitiaSubView = 'borang'"
+             class="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-700 hover:bg-blue-800 text-white font-bold text-xs rounded-xl shadow-xs transition">
+             <span>+</span> Cipta Nota Minta Baharu
+           </button>
+         </div>
           </div>
 
           <!-- 4 Kad Kewangan Panitia (Termasuk Telah Dibelanjakan) -->
@@ -923,6 +930,72 @@
         </div>
       </div>
 
+<!-- ======================================================= -->
+   <!-- MODAL PANITIA: TUKAR KATA LALUAN SENDIRI                -->
+   <!-- ======================================================= -->
+   <div v-if="showPwdModal" class="no-print fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+     <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 space-y-5">
+       <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+         <div>
+           <h3 class="text-base font-extrabold text-slate-900">Tukar Kata Laluan Panitia</h3>
+           <p class="text-[11px] text-slate-500">ID Pengguna: <span class="font-mono font-bold text-slate-800">{{ currentUser.username }}</span></p>
+         </div>
+         <button @click="showPwdModal = false" class="text-slate-400 hover:text-slate-700 font-bold text-sm">✕</button>
+       </div>
+
+       <form @submit.prevent="savePanitiaPassword" class="space-y-4">
+         <div>
+           <label class="block text-xs font-bold text-slate-700 mb-1">Kata Laluan Semasa</label>
+           <input 
+             type="password" 
+             v-model="pwdForm.oldPwd" 
+             required 
+             placeholder="Masukkan kata laluan sekarang" 
+             class="w-full text-xs p-3 border border-slate-300 rounded-xl focus:outline-blue-700"
+           />
+         </div>
+
+         <div>
+           <label class="block text-xs font-bold text-slate-700 mb-1">Kata Laluan Baharu</label>
+           <input 
+             type="password" 
+             v-model="pwdForm.newPwd" 
+             required 
+             minlength="4"
+             placeholder="Minimum 4 aksara" 
+             class="w-full text-xs p-3 border border-slate-300 rounded-xl focus:outline-blue-700"
+           />
+         </div>
+
+         <div>
+           <label class="block text-xs font-bold text-slate-700 mb-1">Sahkan Kata Laluan Baharu</label>
+           <input 
+             type="password" 
+             v-model="pwdForm.confirmPwd" 
+             required 
+             placeholder="Taip semula kata laluan baharu" 
+             class="w-full text-xs p-3 border border-slate-300 rounded-xl focus:outline-blue-700"
+           />
+         </div>
+
+         <div class="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+           <button 
+             type="button" 
+             @click="showPwdModal = false" 
+             class="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl">
+             Batal
+           </button>
+           <button 
+             type="submit" 
+             :disabled="modalSubmitting" 
+             class="px-5 py-2 text-xs font-bold text-white bg-blue-800 hover:bg-blue-900 rounded-xl shadow-xs disabled:opacity-50">
+             {{ modalSubmitting ? 'Menyimpan...' : 'Simpan Password Baharu' }}
+           </button>
+         </div>
+       </form>
+     </div>
+   </div>
+
     </div>
   </div>
 
@@ -960,6 +1033,8 @@
           activePrintReq: null,
           activePrintItems: [],
           showAddModal: false,
+          showPwdModal: false,
+          pwdForm: { oldPwd: '', newPwd: '', confirmPwd: '' },
           newPanitiaForm: {
             name: '',
             code: '',
@@ -1425,6 +1500,41 @@
           this.activePrintReq = req;
           const { data, error } = await db.from('requisition_items').select('*').eq('requisition_id', req.id);
           this.activePrintItems = error ? [] : (data || []);
+        },
+        openChangePwdModal() {
+          this.pwdForm = { oldPwd: '', newPwd: '', confirmPwd: '' };
+          this.showPwdModal = true;
+        },
+        async savePanitiaPassword() {
+          if (this.pwdForm.oldPwd.trim() !== this.currentUser.password) {
+            return alert('Kata laluan semasa tidak tepat.');
+          }
+          if (this.pwdForm.newPwd.trim().length < 4) {
+            return alert('Kata laluan baharu mestilah sekurang-kurangnya 4 aksara.');
+          }
+          if (this.pwdForm.newPwd.trim() !== this.pwdForm.confirmPwd.trim()) {
+            return alert('Pengesahan kata laluan baharu tidak sepadan.');
+          }
+
+          this.modalSubmitting = true;
+          const updatedPwd = this.pwdForm.newPwd.trim();
+          try {
+            const { error } = await db
+              .from('system_accounts')
+              .update({ password: updatedPwd })
+              .eq('id', this.currentUser.id);
+
+            if (error) throw error;
+
+            this.currentUser.password = updatedPwd;
+            sessionStorage.setItem('skkemahal_user', JSON.stringify(this.currentUser));
+            this.showPwdModal = false;
+            alert('Berjaya! Kata laluan baharu anda telah disimpan.');
+          } catch (err) {
+            alert('Gagal menukar kata laluan: ' + err.message);
+          } finally {
+            this.modalSubmitting = false;
+          }
         }
       }
     }).mount('#app');
