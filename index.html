@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sistem Nota Minta & Semakan Baki PCG - SK Kemahal</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    @media print {
+      body * { visibility: hidden; }
+      #printable-area, #printable-area * { visibility: visible; }
+      #printable-area { position: absolute; left: 0; top: 0; width: 100%; margin: 0; padding: 20px; }
+      .no-print { display: none !important; }
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen">
+
+  <div id="app" class="p-4 md:p-8 max-w-7xl mx-auto">
+    
+    <!-- 1. HEADER & PENSUISAN PERANAN -->
+    <header class="no-print mb-6 bg-white p-6 rounded-2xl shadow-xs border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="bg-blue-800 text-white text-[11px] font-bold px-2.5 py-0.5 rounded tracking-wide">
+            SK KEMAHAL
+          </span>
+          <span class="text-xs text-slate-400 font-medium">Tahun Kewangan 2026</span>
+          <span v-if="isConnected" class="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Online (Supabase)
+          </span>
+          <span v-else class="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+            Menyambung...
+          </span>
+        </div>
+        <h1 class="text-2xl font-black text-slate-900 mt-1">Sistem Nota Minta & Baki PCG</h1>
+      </div>
+
+      <!-- Pemilih Pandangan / Peranan -->
+      <div class="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-200 text-xs">
+        <button 
+          @click="switchView('pt')" 
+          :class="currentView === 'pt' ? 'bg-white text-blue-800 font-bold shadow-xs' : 'text-slate-600 font-medium hover:text-slate-900'"
+          class="px-4 py-2 rounded-lg transition">
+          🏢 Pejabat (PT Kewangan)
+        </button>
+        <button 
+          @click="switchView('panitia')" 
+          :class="currentView === 'panitia' || currentView === 'borang' ? 'bg-white text-blue-800 font-bold shadow-xs' : 'text-slate-600 font-medium hover:text-slate-900'"
+          class="px-4 py-2 rounded-lg transition">
+          🔬 Panitia Sains (PCG-SN)
+        </button>
+      </div>
+    </header>
+
+    <div v-if="loading" class="no-print p-12 text-center text-sm text-slate-500 font-medium">
+      Memuatkan data kewangan dari pangkalan data SK Kemahal...
+    </div>
+
+    <!-- ========================================================= -->
+    <!-- 2. PAPARAN UTAMA PEMBANTU TADBIR (PT KEWANGAN)            -->
+    <!-- ========================================================= -->
+    <main v-if="!loading && currentView === 'pt'" class="no-print space-y-6">
+      
+      <!-- 4 Kad Ringkasan Seluruh Sekolah -->
+      <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+          <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Peruntukan Asal</span>
+          <p class="text-2xl font-black text-slate-900 mt-1.5">RM {{ formatRM(totalAllocation) }}</p>
+          <span class="text-[11px] text-slate-500">Semua panitia teras & khas</span>
+        </div>
+
+        <div class="bg-amber-50/60 p-5 rounded-2xl border border-amber-200 shadow-xs">
+          <span class="text-[11px] font-bold text-amber-700 uppercase tracking-wider">Komitmen Semasa</span>
+          <p class="text-2xl font-black text-amber-900 mt-1.5">RM {{ formatRM(totalCommitted) }}</p>
+          <span class="text-[11px] text-amber-600">Menunggu cop hidup Guru Besar</span>
+        </div>
+
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+          <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Telah Dibelanjakan</span>
+          <p class="text-2xl font-black text-slate-900 mt-1.5">RM {{ formatRM(totalSpent) }}</p>
+          <span class="text-[11px] text-slate-500">Borang disahkan & selesai</span>
+        </div>
+
+        <div class="bg-emerald-50/60 p-5 rounded-2xl border border-emerald-200 shadow-xs">
+          <span class="text-[11px] font-bold text-emerald-700 uppercase tracking-wider">Baki Bersih Boleh Guna</span>
+          <p class="text-2xl font-black text-emerald-900 mt-1.5">RM {{ formatRM(totalAvailable) }}</p>
+          <span class="text-[11px] text-emerald-600">Baki sekolah yang masih bebas</span>
+        </div>
+      </section>
+
+      <!-- Jadual 1: Senarai Menunggu Cop GB (Pengesahan PT) -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+          <h2 class="text-sm font-bold text-slate-900 flex items-center gap-2">
+            <span>Senarai Nota Minta Menunggu Pengesahan Fizikal</span>
+            <span class="bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-bold">
+              {{ pendingRequests.length }} Borang
+            </span>
+          </h2>
+          <div class="flex items-center gap-3">
+            <span class="text-xs text-slate-400 hidden sm:inline">Sahkan apabila borang kertas telah dicop Guru Besar</span>
+            <button @click="fetchAllData" class="text-xs font-bold text-blue-700 hover:underline">↻ Muat Semula</button>
+          </div>
+        </div>
+
+        <table class="w-full text-left text-xs text-slate-600">
+          <thead class="bg-slate-50 border-b border-slate-100 text-slate-400 uppercase font-semibold">
+            <tr>
+              <th class="p-4">No. Rujukan & Tarikh</th>
+              <th class="p-4">Pemohon & Panitia</th>
+              <th class="p-4">Tujuan Pembelian</th>
+              <th class="p-4 text-right">Jumlah (RM)</th>
+              <th class="p-4 text-center">Tindakan PT</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            <tr v-if="pendingRequests.length === 0">
+              <td colspan="5" class="p-8 text-center text-slate-400">Tiada borang fizikal yang menunggu pengesahan.</td>
+            </tr>
+            <tr v-for="req in pendingRequests" :key="req.id" class="hover:bg-slate-50">
+              <td class="p-4">
+                <div class="font-mono font-bold text-slate-900">{{ req.ref_no }}</div>
+                <span class="text-[10px] text-slate-400">{{ formatDate(req.created_at) }}</span>
+              </td>
+              <td class="p-4">
+                <div class="font-bold text-slate-800">{{ req.applicant_name }}</div>
+                <span class="inline-block text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded mt-0.5">
+                  {{ req.pcg_categories?.name || 'Panitia' }}
+                </span>
+              </td>
+              <td class="p-4 max-w-xs truncate" :title="req.purpose">{{ req.purpose }}</td>
+              <td class="p-4 text-right font-bold text-slate-900">RM {{ formatRM(req.total_amount) }}</td>
+              <td class="p-4 text-center space-x-2">
+                <button 
+                  @click="printRequisition(req)" 
+                  class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg text-[11px]">
+                  Cetak / Lihat
+                </button>
+                <button 
+                  @click="confirmSigned(req)" 
+                  class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[11px] shadow-xs">
+                  ✓ Sahkan Cop GB
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Jadual 2: Baki PCG Setiap Panitia -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div class="p-5 border-b border-slate-100">
+          <h2 class="text-sm font-bold text-slate-900">Kedudukan Baki PCG Semua Panitia</h2>
+        </div>
+        <table class="w-full text-left text-xs text-slate-600">
+          <thead class="bg-slate-50 border-b border-slate-100 text-slate-400 uppercase font-semibold">
+            <tr>
+              <th class="p-4">Panitia / Kod</th>
+              <th class="p-4 text-right">Peruntukan Asal</th>
+              <th class="p-4 text-right">Komitmen (Borang)</th>
+              <th class="p-4 text-right">Dibelanjakan</th>
+              <th class="p-4 text-right">Baki Bersih</th>
+              <th class="p-4 text-center">Tindakan</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            <tr v-for="cat in balances" :key="cat.category_id" class="hover:bg-slate-50">
+              <td class="p-4">
+                <div class="font-bold text-slate-800">{{ cat.name }}</div>
+                <div class="font-mono text-[10px] text-slate-400">{{ cat.code }}</div>
+              </td>
+              <td class="p-4 text-right font-medium">RM {{ formatRM(cat.total_allocation) }}</td>
+              <td class="p-4 text-right text-amber-700 font-bold">RM {{ formatRM(cat.total_committed) }}</td>
+              <td class="p-4 text-right text-slate-600 font-bold">RM {{ formatRM(cat.total_spent) }}</td>
+              <td class="p-4 text-right font-black text-emerald-700">RM {{ formatRM(cat.available_balance) }}</td>
+              <td class="p-4 text-center">
+                <button 
+                  @click="openAdjustModal(cat)" 
+                  class="px-2.5 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold rounded-md text-[11px]">
+                  Selaras Baki
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    </main>
+
+    <!-- ========================================================= -->
+    <!-- 3. PAPARAN KHAS DASHBOARD PANITIA SAINS                   -->
+    <!-- ========================================================= -->
+    <main v-if="!loading && currentView === 'panitia' && currentPanitia" class="no-print space-y-6">
+      
+      <!-- Profil & Butang Tindakan Panitia Sains -->
+      <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div class="flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center text-2xl font-black">
+            🔬
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h2 class="text-xl font-extrabold text-slate-900">{{ currentPanitia.name }}</h2>
+              <span class="font-mono text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold">
+                {{ currentPanitia.code }}
+              </span>
+            </div>
+            <p class="text-xs text-slate-500 mt-0.5">Sesi Persekolahan 2026 • Akaun Panitia Berpusat</p>
+          </div>
+        </div>
+
+        <button 
+          @click="currentView = 'borang'"
+          class="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-700 hover:bg-blue-800 text-white font-bold text-xs rounded-xl shadow-xs transition">
+          <span>+</span> Cipta Nota Minta Baharu
+        </button>
+      </div>
+
+      <!-- 3 Kad Kewangan Panitia Sains -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+          <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Peruntukan Asal PCG</span>
+          <p class="text-2xl font-black text-slate-900 mt-1.5">RM {{ formatRM(currentPanitia.total_allocation) }}</p>
+          <span class="text-[11px] text-slate-500">Peruntukan rasmi mata pelajaran</span>
+        </div>
+
+        <div class="bg-amber-50/50 p-5 rounded-2xl border border-amber-200 shadow-xs">
+          <span class="text-[11px] font-bold text-amber-700 uppercase tracking-wider">Komitmen Semasa</span>
+          <p class="text-2xl font-black text-amber-900 mt-1.5">RM {{ formatRM(currentPanitia.total_committed) }}</p>
+          <span class="text-[11px] text-amber-700">Borang dalam proses / belum sah</span>
+        </div>
+
+        <div class="bg-emerald-50/50 p-5 rounded-2xl border border-emerald-200 shadow-xs">
+          <span class="text-[11px] font-bold text-emerald-700 uppercase tracking-wider">Baki Bersih Boleh Guna</span>
+          <p class="text-2xl font-black text-emerald-900 mt-1.5">
+            RM {{ formatRM(currentPanitia.available_balance) }}
+          </p>
+          <span class="text-[11px] text-emerald-700">Baki selamat untuk permohonan baru</span>
+        </div>
+      </div>
+
+      <!-- Rekod Permohonan Panitia Sains Sahaja -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+          <div>
+            <h3 class="text-sm font-bold text-slate-900">Sejarah Permohonan Panitia Sains</h3>
+            <p class="text-xs text-slate-400">Status kelulusan borang fizikal yang diserahkan ke pejabat</p>
+          </div>
+          <span class="text-xs text-slate-500 font-medium">{{ panitiaRequests.length }} Rekod Dijumpai</span>
+        </div>
+
+        <table class="w-full text-left text-xs text-slate-600">
+          <thead class="bg-slate-50 border-b border-slate-100 text-slate-400 uppercase font-semibold">
+            <tr>
+              <th class="p-4">No. Rujukan & Tarikh</th>
+              <th class="p-4">Pemohon</th>
+              <th class="p-4">Tujuan / Pembelian</th>
+              <th class="p-4 text-right">Jumlah (RM)</th>
+              <th class="p-4 text-center">Status Kelulusan</th>
+              <th class="p-4 text-center">Borang</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            <tr v-if="panitiaRequests.length === 0">
+              <td colspan="6" class="p-8 text-center text-slate-400">Belum ada sebarang Nota Minta dibuat.</td>
+            </tr>
+            <tr v-for="req in panitiaRequests" :key="req.id" class="hover:bg-slate-50">
+              <td class="p-4">
+                <div class="font-mono font-bold text-slate-900">{{ req.ref_no }}</div>
+                <span class="text-[10px] text-slate-400">{{ formatDate(req.created_at) }}</span>
+              </td>
+              <td class="p-4 font-semibold text-slate-800">{{ req.applicant_name }}</td>
+              <td class="p-4 max-w-xs truncate" :title="req.purpose">{{ req.purpose }}</td>
+              <td class="p-4 text-right font-black text-slate-900">RM {{ formatRM(req.total_amount) }}</td>
+              <td class="p-4 text-center">
+                <span v-if="req.status === 'DALAM_PROSES'" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                  <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                  Menunggu Cop GB
+                </span>
+                <span v-else-if="req.status === 'SELESAI'" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
+                  Selesai / Sah
+                </span>
+              </td>
+              <td class="p-4 text-center">
+                <button 
+                  @click="printRequisition(req)" 
+                  class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-md text-[11px] transition">
+                  🖨️ Cetak Semula
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    </main>
+
+    <!-- ========================================================= -->
+    <!-- 4. BORANG CIPTA NOTA MINTA KHAS PANITIA SAINS             -->
+    <!-- ========================================================= -->
+    <main v-if="!loading && currentView === 'borang' && currentPanitia" class="no-print bg-white p-6 md:p-8 rounded-2xl shadow-xs border border-slate-200">
+      <div class="flex items-center justify-between pb-4 border-b border-slate-100 mb-6">
+        <div>
+          <h2 class="text-lg font-bold text-slate-900">Borang Nota Minta Baharu</h2>
+          <p class="text-xs text-slate-500">Khas untuk {{ currentPanitia.name }} ({{ currentPanitia.code }})</p>
+        </div>
+        <button 
+          @click="currentView = 'panitia'" 
+          class="text-xs text-slate-500 hover:text-slate-800 font-bold">
+          ← Kembali ke Dashboard Panitia
+        </button>
+      </div>
+
+      <form @submit.prevent="submitNotaMinta" class="space-y-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">Nama Guru Pemohon</label>
+            <input type="text" v-model="form.applicant" required placeholder="Cth: Cikgu Sarah Binti Ali" class="w-full text-xs p-3 border border-slate-300 rounded-xl focus:outline-blue-700">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">Panitia Terlibat (Terkunci)</label>
+            <input type="text" :value="currentPanitia.name + ' (Baki Boleh Guna: RM ' + formatRM(currentPanitia.available_balance) + ')'" disabled class="w-full text-xs p-3 border border-slate-200 rounded-xl bg-slate-100 text-slate-500 font-medium">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">Tujuan / Program Pembelian</label>
+          <input type="text" v-model="form.purpose" required placeholder="Cth: Pembelian Bikar Kaca & Kertas Litmus Amali Sains SPM" class="w-full text-xs p-3 border border-slate-300 rounded-xl focus:outline-blue-700">
+        </div>
+
+        <!-- Senarai Item Dinamik -->
+        <div class="border border-slate-200 rounded-xl p-4 bg-slate-50/50">
+          <div class="flex items-center justify-between mb-3">
+            <span class="text-xs font-bold text-slate-700 uppercase">Perincian Barang / Bahan</span>
+            <button type="button" @click="addItem" class="text-xs bg-blue-800 text-white font-bold px-3 py-1.5 rounded-lg">+ Tambah Barang</button>
+          </div>
+
+          <div v-for="(item, index) in form.items" :key="index" class="flex flex-col md:flex-row gap-2 mb-2 items-center">
+            <input type="text" v-model="item.desc" required placeholder="Perihal barang (Cth: Tabung Uji Kaca 100mm)" class="w-full md:flex-1 text-xs p-2.5 border border-slate-300 rounded-lg bg-white">
+            <input type="number" v-model.number="item.qty" min="1" required placeholder="Kuantiti" class="w-full md:w-24 text-xs p-2.5 border border-slate-300 rounded-lg bg-white">
+            <input type="number" step="0.01" v-model.number="item.price" min="0" required placeholder="Harga Seunit (RM)" class="w-full md:w-36 text-xs p-2.5 border border-slate-300 rounded-lg bg-white">
+            <span class="w-28 text-right font-bold text-xs text-slate-800">RM {{ formatRM(item.qty * item.price) }}</span>
+            <button type="button" @click="removeItem(index)" v-if="form.items.length > 1" class="text-red-500 font-bold px-2 text-xs">✕</button>
+          </div>
+
+          <div class="text-right pt-4 border-t border-slate-200 mt-4">
+            <span class="text-xs text-slate-500 font-medium">Jumlah Anggaran: </span>
+            <span class="text-lg font-black text-slate-900 ml-2">RM {{ formatRM(calculateTotal) }}</span>
+          </div>
+        </div>
+
+        <button type="submit" :disabled="submitting" class="w-full py-3.5 bg-blue-800 hover:bg-blue-900 text-white font-bold rounded-xl text-sm shadow-md transition disabled:opacity-50">
+          {{ submitting ? 'Menyimpan Rekod ke Supabase...' : 'Hantar & Cetak Borang Nota Minta' }}
+        </button>
+      </form>
+    </main>
+
+    <!-- ========================================================= -->
+    <!-- 5. TEMPLAT CETAKAN A4 RASMI (NOTA MINTA)                  -->
+    <!-- ========================================================= -->
+    <div id="printable-area" v-if="activePrintReq" class="p-8 bg-white border border-slate-300 max-w-3xl mx-auto text-black font-serif mt-6">
+      <div class="text-center pb-4 border-b-2 border-black">
+        <h2 class="text-base font-bold uppercase">SEKOLAH KEBANGSAAN KEMAHAL</h2>
+        <h1 class="text-xl font-bold uppercase tracking-wider mt-1">NOTA MINTA</h1>
+        <p class="text-xs">No. Rujukan: <span class="font-bold">{{ activePrintReq.ref_no }}</span> | Tarikh: {{ formatDate(activePrintReq.created_at) }}</p>
+      </div>
+
+      <div class="my-4 text-xs space-y-1">
+        <p><strong>Kepada:</strong> Guru Besar SK Kemahal</p>
+        <p><strong>Daripada:</strong> {{ activePrintReq.applicant_name }} ({{ getCategoryName(activePrintReq.category_id) }})</p>
+        <p><strong>Tujuan Permohonan:</strong> {{ activePrintReq.purpose }}</p>
+      </div>
+
+      <table class="w-full text-xs border-collapse border border-black my-4">
+        <thead>
+          <tr class="bg-gray-100">
+            <th class="border border-black p-2 text-center w-10">Bil</th>
+            <th class="border border-black p-2 text-left">Perihal Barang / Perkhidmatan</th>
+            <th class="border border-black p-2 text-center w-16">Kuantiti</th>
+            <th class="border border-black p-2 text-right w-24">Harga (RM)</th>
+            <th class="border border-black p-2 text-right w-28">Jumlah (RM)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(item, idx) in activePrintItems" :key="idx">
+            <td class="border border-black p-2 text-center">{{ idx + 1 }}</td>
+            <td class="border border-black p-2">{{ item.description }}</td>
+            <td class="border border-black p-2 text-center">{{ item.quantity }}</td>
+            <td class="border border-black p-2 text-right">{{ formatRM(item.unit_price) }}</td>
+            <td class="border border-black p-2 text-right font-bold">{{ formatRM(item.quantity * item.unit_price) }}</td>
+          </tr>
+          <tr>
+            <td colspan="4" class="border border-black p-2 text-right font-bold uppercase">Jumlah Keseluruhan Permohonan</td>
+            <td class="border border-black p-2 text-right font-black">RM {{ formatRM(activePrintReq.total_amount) }}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Ruangan Tandatangan & Cop Hidup GB -->
+      <div class="grid grid-cols-2 gap-8 mt-12 text-xs">
+        <div>
+          <p class="font-bold">Permohonan oleh:</p>
+          <div class="h-20"></div>
+          <p class="border-t border-black pt-1">Tandatangan Pemohon / Ketua Panitia</p>
+          <p>Nama: {{ activePrintReq.applicant_name }}</p>
+        </div>
+        <div>
+          <p class="font-bold">Kelulusan Guru Besar:</p>
+          <div class="h-20"></div>
+          <p class="border-t border-black pt-1">Tandatangan & Cop Rasmi Jawatan</p>
+          <p>Tarikh: ........................................</p>
+        </div>
+      </div>
+
+      <div class="no-print mt-8 text-center">
+        <button onclick="window.print()" class="px-6 py-2.5 bg-blue-800 text-white font-bold rounded-lg text-xs shadow-md">
+          Cetak Borang Sekarang
+        </button>
+        <button @click="activePrintReq = null" class="ml-2 px-4 py-2.5 bg-slate-200 text-slate-700 font-bold rounded-lg text-xs">
+          Tutup
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 6. LOGIK VUE.JS + SAMBUNGAN SUPABASE SK KEMAHAL -->
+  <script>
+    const SUPABASE_URL = 'https://ihpupjcqzfiqkyszufbz.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_CW0vAtAKXqRDFG5S1loFFg_BKCBNlxl';
+    
+    const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const { createApp } = Vue;
+
+    createApp({
+      data() {
+        return {
+          currentView: 'pt', // 'pt' | 'panitia' | 'borang'
+          loading: true,
+          submitting: false,
+          isConnected: false,
+          balances: [],
+          allRequests: [],
+          activePrintReq: null,
+          activePrintItems: [],
+          form: {
+            applicant: '',
+            purpose: '',
+            items: [{ desc: '', qty: 1, price: 0 }]
+          }
+        }
+      },
+      computed: {
+        currentPanitia() {
+          return this.balances.find(c => c.code === 'PCG-SN');
+        },
+        panitiaRequests() {
+          if (!this.currentPanitia) return [];
+          return this.allRequests.filter(r => r.category_id === this.currentPanitia.category_id);
+        },
+        pendingRequests() {
+          return this.allRequests.filter(r => r.status === 'DALAM_PROSES');
+        },
+        totalAllocation() { return this.balances.reduce((a, b) => a + Number(b.total_allocation || 0), 0); },
+        totalCommitted() { return this.balances.reduce((a, b) => a + Number(b.total_committed || 0), 0); },
+        totalSpent() { return this.balances.reduce((a, b) => a + Number(b.total_spent || 0), 0); },
+        totalAvailable() { return this.balances.reduce((a, b) => a + Number(b.available_balance || 0), 0); },
+        calculateTotal() {
+          return this.form.items.reduce((sum, item) => sum + ((Number(item.qty) || 0) * (Number(item.price) || 0)), 0);
+        }
+      },
+      async mounted() {
+        await this.fetchAllData();
+      },
+      methods: {
+        async fetchAllData() {
+          this.loading = true;
+          try {
+            // 1. Tarik data lejar baki panitia
+            const { data: balData, error: balErr } = await db
+              .from('view_pcg_balances')
+              .select('*')
+              .order('name', { ascending: true });
+            
+            if (balErr) throw balErr;
+            this.balances = balData || [];
+
+            // 2. Tarik semua senarai Nota Minta
+            const { data: reqData, error: reqErr } = await db
+              .from('requisitions')
+              .select('*, pcg_categories(name, code)')
+              .order('created_at', { ascending: false });
+
+            if (reqErr) throw reqErr;
+            this.allRequests = reqData || [];
+            this.isConnected = true;
+          } catch (err) {
+            console.error('Ralat sambungan Supabase:', err.message);
+            alert('Gagal berhubung ke Supabase: ' + err.message);
+          } finally {
+            this.loading = false;
+          }
+        },
+        switchView(v) {
+          this.currentView = v;
+          this.activePrintReq = null;
+        },
+        formatRM(val) {
+          return Number(val || 0).toLocaleString('ms-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        },
+        formatDate(dateStr) {
+          if (!dateStr) return '-';
+          return new Date(dateStr).toLocaleDateString('ms-MY');
+        },
+        getCategoryName(catId) {
+          const c = this.balances.find(item => item.category_id === catId);
+          return c ? c.name : 'Panitia';
+        },
+        addItem() {
+          this.form.items.push({ desc: '', qty: 1, price: 0 });
+        },
+        removeItem(index) {
+          this.form.items.splice(index, 1);
+        },
+        async submitNotaMinta() {
+          const total = this.calculateTotal;
+          const panitia = this.currentPanitia;
+          const bakiBolehGuna = Number(panitia.available_balance);
+
+          if (total <= 0) {
+            alert('Sila masukkan sekurang-kurangnya satu barang dengan harga yang sah.');
+            return;
+          }
+
+          if (total > bakiBolehGuna) {
+            alert(`Permohonan ditolak! Baki panitia tidak mencukupi.\nBaki boleh guna: RM ${this.formatRM(bakiBolehGuna)}\nJumlah diminta: RM ${this.formatRM(total)}`);
+            return;
+          }
+
+          this.submitting = true;
+          const refNo = `NM/2026/SN/${Math.floor(100 + Math.random() * 900)}`;
+
+          try {
+            // 1. Masukkan induk Nota Minta ke Supabase
+            const { data: insertedReq, error: reqErr } = await db
+              .from('requisitions')
+              .insert([{
+                ref_no: refNo,
+                applicant_name: this.form.applicant,
+                category_id: panitia.category_id,
+                purpose: this.form.purpose,
+                total_amount: total,
+                status: 'DALAM_PROSES'
+              }])
+              .select()
+              .single();
+
+            if (reqErr) throw reqErr;
+
+            // 2. Masukkan setiap perincian item ke jadual requisition_items
+            const itemsPayload = this.form.items.map(i => ({
+              requisition_id: insertedReq.id,
+              description: i.desc,
+              quantity: i.qty,
+              unit_price: i.price
+            }));
+
+            const { error: itemsErr } = await db
+              .from('requisition_items')
+              .insert(itemsPayload);
+
+            if (itemsErr) throw itemsErr;
+
+            // 3. Kemaskini paparan dan terus buka cetakan A4
+            this.form = { applicant: '', purpose: '', items: [{ desc: '', qty: 1, price: 0 }] };
+            await this.fetchAllData();
+            await this.printRequisition(insertedReq);
+            this.currentView = 'panitia';
+            alert('Borang berjaya disimpan ke pangkalan data! Sila cetak borang untuk dibawa kepada Guru Besar.');
+          } catch (err) {
+            alert('Ralat menyimpan permohonan: ' + err.message);
+          } finally {
+            this.submitting = false;
+          }
+        },
+        async confirmSigned(req) {
+          const sah = window.confirm(`Sahkan bahawa borang ${req.ref_no} telah ditandatangani dan dicop hidup oleh Guru Besar?`);
+          if (!sah) return;
+
+          try {
+            const { error } = await db
+              .from('requisitions')
+              .update({ status: 'SELESAI', updated_at: new Date().toISOString() })
+              .eq('id', req.id);
+
+            if (error) throw error;
+            await this.fetchAllData();
+            alert(`Nota Minta ${req.ref_no} berjaya disahkan dan ditolak dari baki panitia secara kekal.`);
+          } catch (err) {
+            alert('Ralat pengesahan: ' + err.message);
+          }
+        },
+        async printRequisition(req) {
+          this.activePrintReq = req;
+          const { data, error } = await db
+            .from('requisition_items')
+            .select('*')
+            .eq('requisition_id', req.id);
+          
+          this.activePrintItems = error ? [] : (data || []);
+        },
+        async openAdjustModal(cat) {
+          const tambah = prompt(`Pelarasan PCG untuk ${cat.name}.\nMasukkan nilai (+ untuk tambah, - untuk tolak):`, "0");
+          const nilai = parseFloat(tambah);
+          if (!isNaN(nilai) && nilai !== 0) {
+            const newTotal = Number(cat.total_allocation) + nilai;
+            if (newTotal < 0) {
+              alert('Peruntukan asal tidak boleh menjadi negatif.');
+              return;
+            }
+            const { error } = await db
+              .from('pcg_categories')
+              .update({ initial_allocation: newTotal, updated_at: new Date().toISOString() })
+              .eq('id', cat.category_id);
+
+            if (error) {
+              alert('Gagal mengemaskini baki: ' + error.message);
+            } else {
+              await this.fetchAllData();
+            }
+          }
+        }
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
